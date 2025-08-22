@@ -1,30 +1,43 @@
 "use client";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 
 export default function ClientStream({ slug }: { slug: string }) {
   const [html, setHtml] = useState("<div>Generating…</div>");
-  const abortRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
     const controller = new AbortController();
-    abortRef.current = controller;
 
     (async () => {
-      const res = await fetch(`/api/stream?slug=${encodeURIComponent(slug)}`, {
-        method: "GET",
-        signal: controller.signal,
-      });
-      if (!res.body) return;
-      const reader = res.body.getReader();
-      const decoder = new TextDecoder();
-      let acc = "";
-      while (true) {
-        const { value, done } = await reader.read();
-        if (done) break;
-        acc += decoder.decode(value, { stream: true });
+      try {
+        const res = await fetch(`/api/stream?slug=${encodeURIComponent(slug)}`, {
+          method: "GET",
+          signal: controller.signal,
+          cache: "no-store",
+        });
+        if (!res.ok) {
+          const text = await res.text().catch(() => "");
+          setHtml(`<div>Failed to generate. ${text ? `\n${text}` : ""}</div>`);
+          return;
+        }
+        if (!res.body) return;
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let acc = "";
+        while (true) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          acc += decoder.decode(value, { stream: true });
+          setHtml(`<div>${acc}</div>`);
+        }
+        // flush final chunk
+        acc += decoder.decode();
         setHtml(`<div>${acc}</div>`);
+      } catch (err: unknown) {
+        if (err && typeof err === "object" && (err as any).name === "AbortError") {
+          return; // ignore aborts (e.g., effect cleanup or route change)
+        }
+        setHtml(`<div>Stream error.</div>`);
       }
-      setHtml(`<div>${acc}</div>`);
     })();
 
     return () => controller.abort();
